@@ -1,7 +1,8 @@
 package scorex.wallet
 
-import java.io.{File, FileInputStream, FileOutputStream}
-import java.security.{KeyPairGenerator, KeyStore, PrivateKey}
+import java.io.{ByteArrayInputStream, File, FileInputStream, FileOutputStream}
+import java.security.cert.{Certificate, CertificateFactory}
+import java.security.{KeyPair, KeyPairGenerator, KeyStore, PrivateKey}
 
 import com.wavesplatform.settings.WalletSettings
 import ru.CryptoPro.JCP.JCP
@@ -9,7 +10,7 @@ import scorex.account.{Address, PrivateKeyAccount, PublicKeyAccount}
 import scorex.transaction.ValidationError
 import scorex.utils.ScorexLogging
 import sun.security.jca.JCAUtil
-import userSamples.KeyPairGen
+import ru.CryptoPro.JCPRequest.GostCertificateRequest
 
 import scala.collection.JavaConverters._
 import scala.util.{Failure, Success, Try}
@@ -33,10 +34,17 @@ class Wallet (file: Option[File], password: Array[Char]) extends AutoCloseable w
   def generateNewAccounts(howMany: Int): Seq[PublicKeyAccount] =
     (1 to howMany).flatMap(_ => generateNewAccount())
 
+  private def genSelfCert(pair: KeyPair, dname: String): Certificate = {
+    val gr = new GostCertificateRequest()
+    val enc = gr.getEncodedSelfCert(pair, dname)
+    val cf = CertificateFactory.getInstance(JCP.CERTIFICATE_FACTORY_NAME)
+    cf.generateCertificate(new ByteArrayInputStream(enc))
+  }
+
   def generateNewAccount(): Option[PublicKeyAccount] = synchronized {
     val pair = kg.generateKeyPair
     val pka = PublicKeyAccount(pair.getPublic.getEncoded)
-    keyStore.setKeyEntry(pka.address, pair.getPrivate, password, Array(KeyPairGen.genSelfCert(pair, "CN=Waves_2012_256, O=Waves, C=RU")))
+    keyStore.setKeyEntry(pka.address, pair.getPrivate, password, Array(genSelfCert(pair, "CN=Waves_2012_256, O=Waves, C=RU")))
     // todo do not store it like this?
     file.foreach(f => keyStore.store(new FileOutputStream(f), password))
     Some(pka)
