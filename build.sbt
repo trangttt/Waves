@@ -16,13 +16,15 @@ scalacOptions ++= Seq(
   "-feature",
   "-deprecation",
   "-Ywarn-unused:-implicits",
-  "-Xlint")
+  "-Xlint",
+  "-Yresolve-term-conflict:object")
 logBuffered := false
 
 //assembly settings
 assemblyJarName in assembly := s"waves-all-${version.value}.jar"
 assemblyMergeStrategy in assembly := {
   case PathList("META-INF", "io.netty.versions.properties") => MergeStrategy.concat
+  case sign if sign.endsWith(".CP") => MergeStrategy.discard
   case other => (assemblyMergeStrategy in assembly).value(other)
 }
 test in assembly := {}
