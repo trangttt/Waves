@@ -185,7 +185,7 @@ object Block extends ScorexLogging {
     }
   }
 
-  def genesis(genesisSettings: GenesisSettings): Either[ValidationError, Block] = {
+  def genesis(genesisSettings: GenesisSettings, wallet: Wallet): Either[ValidationError, Block] = {
     val version: Byte = 1
 
     val transactionGenesisData = genesisTransactions(genesisSettings)
@@ -202,9 +202,9 @@ object Block extends ScorexLogging {
     val timestamp = genesisSettings.blockTimestamp
 
     // todo create one generator for genesis block
-    val genesisSignerPair = Wallet.kg.generateKeyPair()
+    val genesisSignerPair = wallet.privateKeyAccounts().head
 
-    val genesisSigner = genesisSignerPair.getPublic.getEncoded
+    val genesisSigner = genesisSignerPair.publicKey.getEncoded
 
     val toSign: Array[Byte] = Array(version) ++
       Bytes.ensureCapacity(Longs.toByteArray(timestamp), 8, 0) ++
@@ -213,7 +213,7 @@ object Block extends ScorexLogging {
       txBytes ++
       genesisSigner
 
-    val signature = GostSign.sign(genesisSignerPair.getPrivate, toSign)
+    val signature = GostSign.sign(genesisSignerPair.privateKey, toSign)
 
     Right(Block(timestamp = timestamp,
         version = version,

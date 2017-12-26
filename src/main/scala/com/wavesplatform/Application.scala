@@ -141,7 +141,7 @@ class Application(val actorSystem: ActorSystem, val settings: WavesSettings) ext
   }
 
   def checkGenesis(): Unit = if (history.isEmpty) {
-    Block.genesis(settings.blockchainSettings.genesisSettings).flatMap(blockchainUpdater.processBlock)
+    Block.genesis(settings.blockchainSettings.genesisSettings, wallet).flatMap(blockchainUpdater.processBlock)
       .left.foreach { value =>
         log.error(value.toString)
         forceStopApplication()
@@ -193,7 +193,7 @@ object Application extends ScorexLogging {
     }
   }
 
-  private def readConfig(userConfigPath: Option[String]): Config = {
+  protected[wavesplatform] def readConfig(userConfigPath: Option[String]): Config = {
     val maybeConfigFile = for {
       maybeFilename <- userConfigPath
       file = new File(maybeFilename)
