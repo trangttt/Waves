@@ -74,13 +74,13 @@ class WalletSpecification extends FunSuite with Matchers {
     val seed = randomBytes(64)
 
     val w1 = new WalletObsolete(f1, "cookies".toCharArray, Some(seed))
-    val a1 = w1.generateNewAccount().get.address
+    val a1 = w1.generateNewAccounts(10)
     w1.close()
 
     val w2 = Wallet(WalletSettings(f2, "cookies", Some(ByteStr(seed))))
-    val a2 =w2.generateNewAccount().get.address
+    val a2 =w2.generateNewAccounts(10)
     w2.close()
 
-    a1 shouldEqual a2
+    a1.sameElements(a2) shouldBe true
   }
 }
