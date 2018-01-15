@@ -106,6 +106,17 @@ class TransactionsApiSuite extends BaseTransactionSuite {
       "fee" -> 1.waves))
   }
 
+  test("/transactions/sign should produce burn transactions that are good for /transactions/broadcast") {
+    val issueTx = Await.result(sender.issue(firstAddress, "testasset", "descr", 10000, 2, true, 1.waves), 1.minute)
+    waitForHeightAraiseAndTxPresent(issueTx.id, 2);
+    val issueId = signAndBroadcast(Json.obj(
+      "type" -> 6,
+      "sender" -> firstAddress,
+      "assetId" -> issueTx.id,
+      "quantity" -> 1,
+      "fee" -> 1.waves))
+  }
+
   test("/transactions/sign should produce transfer transaction that is good for /transactions/broadcast") {
     signAndBroadcast(Json.obj(
       "type" -> 4,
@@ -122,6 +133,17 @@ class TransactionsApiSuite extends BaseTransactionSuite {
       "sender" -> firstAddress,
       "amount" -> 1.waves,
       "recipient" -> secondAddress,
+      "fee" -> 100000))
+  }
+
+  test("/transactions/sign should produce cancel leasing transactions that are good for /transactions/broadcast") {
+    val leasingTx = Await.result(sender.lease(firstAddress, secondAddress, 1.waves, 100000), 1.minute)
+    waitForHeightAraiseAndTxPresent(leasingTx.id, 2);
+
+    signAndBroadcast(Json.obj(
+      "type" -> 9,
+      "sender" -> firstAddress,
+      "txId" -> leasingTx.id,
       "fee" -> 100000))
   }
 
