@@ -1,15 +1,19 @@
 package scorex.transaction.lease
 
 import com.google.common.primitives.{Bytes, Longs}
+import com.wavesplatform.crypto.GostSign
 import com.wavesplatform.state2.ByteStr
 import play.api.libs.json.{JsObject, Json}
 import scorex.account.{PrivateKeyAccount, PublicKeyAccount}
-import com.wavesplatform.crypto.GostSign
+import scorex.crypto.EllipticCurveImpl
+import scorex.crypto.EllipticCurveImpl.SignatureLength
 import scorex.crypto.hash.FastCryptographicHash.DigestSize
 import scorex.transaction.TransactionParser.{KeyLength, _}
 import scorex.transaction._
 
 import scala.util.{Failure, Success, Try}
+import monix.eval.Coeval
+import com.wavesplatform.crypto.GostSign
 
 case class LeaseCancelTransaction private(sender: PublicKeyAccount,
                                           leaseId: ByteStr,
@@ -20,20 +24,20 @@ case class LeaseCancelTransaction private(sender: PublicKeyAccount,
 
   override val transactionType: TransactionType.Value = TransactionType.LeaseCancelTransaction
 
-  lazy val toSign: Array[Byte] = Bytes.concat(Array(transactionType.id.toByte),
+  val toSign: Coeval[Array[Byte]] = Coeval.evalOnce(Bytes.concat(Array(transactionType.id.toByte),
     sender.publicKey.getEncoded,
     Longs.toByteArray(fee),
     Longs.toByteArray(timestamp),
-    leaseId.arr)
+    leaseId.arr))
 
-  override lazy val json: JsObject = jsonBase() ++ Json.obj(
+  override val json: Coeval[JsObject] = Coeval.evalOnce(jsonBase() ++ Json.obj(
     "fee" -> fee,
     "timestamp" -> timestamp,
     "leaseId" -> leaseId.base58
-  )
+  ))
 
   override val assetFee: (Option[AssetId], Long) = (None, fee)
-  override lazy val bytes: Array[Byte] = Bytes.concat(toSign, signature.arr)
+  override val bytes = Coeval.evalOnce(Bytes.concat(toSign(), signature.arr))
 
 }
 
@@ -68,7 +72,7 @@ object LeaseCancelTransaction {
              fee: Long,
              timestamp: Long): Either[ValidationError, LeaseCancelTransaction] = {
     create(sender, leaseId, fee, timestamp, ByteStr.empty).right.map { unsigned =>
-      unsigned.copy(signature = ByteStr(GostSign.sign(sender, unsigned.toSign)))
+      unsigned.copy(signature = ByteStr(GostSign.sign(sender, unsigned.toSign())))
     }
   }
 }

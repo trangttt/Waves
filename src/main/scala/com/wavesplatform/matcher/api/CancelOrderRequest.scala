@@ -5,7 +5,10 @@ import play.api.libs.functional.syntax._
 import play.api.libs.json.Reads._
 import play.api.libs.json.{JsObject, JsPath, Json, Reads}
 import scorex.account.{PrivateKeyAccount, PublicKeyAccount}
+import scorex.account.PublicKeyAccount
 import com.wavesplatform.crypto.GostSign
+import scorex.account.PublicKeyAccount
+import scorex.crypto.EllipticCurveImpl
 import scorex.crypto.encode.Base58
 import scorex.transaction.assets.exchange.OrderJson._
 
@@ -31,10 +34,5 @@ object CancelOrderRequest {
       (JsPath \ "orderId").read[Array[Byte]] and
       (JsPath \ "signature").read[Array[Byte]]
     r(CancelOrderRequest.apply _)
-  }
-
-  def sign(unsigned: CancelOrderRequest, sender: PrivateKeyAccount): CancelOrderRequest = {
-    val sig = GostSign.sign(sender, unsigned.toSign)
-    unsigned.copy(signature = sig)
   }
 }

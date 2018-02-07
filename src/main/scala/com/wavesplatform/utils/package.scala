@@ -1,50 +1,72 @@
 package com.wavesplatform
 
-import java.io.File
-import java.nio.file.Files
-
-import org.h2.mvstore.MVStore
+import com.google.common.base.Throwables
+import com.wavesplatform.db.{Storage, VersionedStorage}
+import monix.execution.UncaughtExceptionReporter
+import org.joda.time.Duration
+import org.joda.time.format.PeriodFormat
 import scorex.utils.ScorexLogging
 
 import scala.util.Try
 
 package object utils extends ScorexLogging {
 
-  def base58Length(byteArrayLength: Int): Int = math.ceil(math.log(256) / math.log(58) * byteArrayLength).toInt
+  type HeightInfo = (Int, Long)
 
-  def createMVStore(file: Option[File], encryptionKey: Option[Array[Char]] = None): MVStore = {
-    val builder = file.fold(new MVStore.Builder) { p =>
-      p.getParentFile.mkdirs()
-      new MVStore.Builder()
-        .fileName(p.getCanonicalPath)
-        .autoCommitDisabled()
-        .compress()
-    }
+  private val BytesMaxValue = 256
+  private val Base58MaxValue = 58
 
-    val store = encryptionKey match {
-      case Some(key) => builder.encryptionKey(key).open()
-      case _ => builder.open()
-    }
+  private val BytesLog = math.log(BytesMaxValue)
+  private val BaseLog = math.log(Base58MaxValue)
 
-    store.rollback()
+  val UncaughtExceptionsToLogReporter = UncaughtExceptionReporter(exc => log.error(Throwables.getStackTraceAsString(exc)))
 
-    store
-  }
+  def base58Length(byteArrayLength: Int): Int = math.ceil(BytesLog / BaseLog * byteArrayLength).toInt
 
-  def createWithStore[A <: AutoCloseable](storeFile: Option[File], f: => A, pred: A => Boolean, deleteExisting: Boolean = false): Try[A] = Try {
-    for (fileToDelete <- storeFile if deleteExisting) Files.delete(fileToDelete.toPath)
-    val a = f
-    if (pred(a)) a else storeFile match {
-      case Some(file) =>
-        log.info(s"Re-creating file store at $file")
-        a.close()
-        Files.delete(file.toPath)
-        val newA = f
-        require(pred(newA), "store is inconsistent")
-        newA
-      case None => throw new IllegalArgumentException("in-memory store is corrupted")
+  def createWithVerification[A <: Storage with VersionedStorage](storage: => A): Try[A] = Try {
+    if (storage.isVersionValid) storage else {
+      log.info(s"Re-creating storage")
+      val b = storage.createBatch()
+      storage.removeEverything(b)
+      storage.commit(b)
+      storage
     }
   }
 
-  def forceStopApplication(): Unit = new Thread(() => { System.exit(1) }, "waves-platform-shutdown-thread").start()
+  def forceStopApplication(reason: ApplicationStopReason = Default): Unit = new Thread(() => {
+    System.exit(reason.code)
+  }, "waves-platform-shutdown-thread").start()
+
+  def humanReadableSize(bytes: Long, si: Boolean = true): String = {
+    val (baseValue, unitStrings) =
+      if (si)
+        (1000, Vector("B", "kB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"))
+      else
+        (1024, Vector("B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"))
+
+    def getExponent(curBytes: Long, baseValue: Int, curExponent: Int = 0): Int =
+      if (curBytes < baseValue) curExponent
+      else {
+        val newExponent = 1 + curExponent
+        getExponent(curBytes / (baseValue * newExponent), baseValue, newExponent)
+      }
+
+    val exponent = getExponent(bytes, baseValue)
+    val divisor = Math.pow(baseValue, exponent)
+    val unitString = unitStrings(exponent)
+
+    f"${bytes / divisor}%.1f $unitString"
+  }
+
+  def humanReadableDuration(duration: Long): String = {
+    val d = new Duration(duration)
+    PeriodFormat.getDefault.print(d.toPeriod)
+  }
+
+  implicit class Tap[A](a: A) {
+    def tap(g: A => Unit): A = {
+      g(a)
+      a
+    }
+  }
 }

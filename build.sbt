@@ -2,23 +2,34 @@ import com.typesafe.sbt.packager.archetypes.TemplateWriter
 import sbt.Keys._
 import sbt._
 
-enablePlugins(sbtdocker.DockerPlugin, JavaServerAppPackaging, JDebPackaging, SystemdPlugin)
+enablePlugins(JavaServerAppPackaging, JDebPackaging, SystemdPlugin, GitVersioning)
+
+inThisBuild(Seq(
+  scalaVersion := "2.12.4",
+  organization := "com.wavesplatform",
+  crossPaths := false
+))
 
 name := "waves"
-organization := "com.wavesplatform"
-version := "0.7.5"
-scalaVersion in ThisBuild := "2.12.3"
-crossPaths := false
+
+git.useGitDescribe := true
+git.uncommittedSignifier := Some("DIRTY")
+
+
 publishArtifact in (Compile, packageDoc) := false
 publishArtifact in (Compile, packageSrc) := false
 mainClass in Compile := Some("com.wavesplatform.Application")
 scalacOptions ++= Seq(
   "-feature",
   "-deprecation",
+  "-language:higherKinds",
+  "-language:implicitConversions",
   "-Ywarn-unused:-implicits",
   "-Xlint",
   "-Yresolve-term-conflict:object")
 logBuffered := false
+
+resolvers += Resolver.bintrayRepo("ethereum", "maven")
 
 //assembly settings
 assemblyJarName in assembly := s"waves-all-${version.value}.jar"
@@ -31,23 +42,20 @@ test in assembly := {}
 
 libraryDependencies ++=
   Dependencies.network ++
-    Dependencies.db ++
-    Dependencies.http ++
-    Dependencies.akka ++
-    Dependencies.serialization ++
-    Dependencies.testKit ++
-    Dependencies.itKit ++
-    Dependencies.logging ++
-    Dependencies.matcher ++
-    Dependencies.kamon ++
-    Seq(
-      "com.iheart" %% "ficus" % "1.4.1",
-      ("org.scorexfoundation" %% "scrypto" % "1.2.2")
-        .exclude("org.slf4j", "slf4j-api"),
-      "commons-net" % "commons-net" % "3.+",
-      "org.typelevel" %% "cats-core" % "0.9.0",
-      "io.monix" %% "monix" % "2.3.0"
-    )
+  Dependencies.db ++
+  Dependencies.http ++
+  Dependencies.akka ++
+  Dependencies.serialization ++
+  Dependencies.testKit.map(_ % "test") ++
+  Dependencies.logging ++
+  Dependencies.matcher ++
+  Dependencies.metrics ++
+  Dependencies.fp ++
+  Seq(
+    "com.iheart" %% "ficus" % "1.4.2",
+    ("org.scorexfoundation" %% "scrypto" % "1.2.2").exclude("org.slf4j", "slf4j-api"),
+    "commons-net" % "commons-net" % "3.+"
+  )
 
 sourceGenerators in Compile += Def.task {
   val versionFile = (sourceManaged in Compile).value / "com" / "wavesplatform" / "Version.scala"
@@ -55,54 +63,27 @@ sourceGenerators in Compile += Def.task {
   val versionExtractor(major, minor, bugfix) = version.value
   IO.write(versionFile,
     s"""package com.wavesplatform
-       |
+      |
       |object Version {
-       |  val VersionString = "${version.value}"
-       |  val VersionTuple = ($major, $minor, $bugfix)
-       |}
-       |""".stripMargin)
+      |  val VersionString = "${version.value}"
+      |  val VersionTuple = ($major, $minor, $bugfix)
+      |}
+      |""".stripMargin)
   Seq(versionFile)
 }
 
 inConfig(Test)(Seq(
   logBuffered := false,
   parallelExecution := false,
-  testOptions += Tests.Argument("-oIDOF", "-u", "target/test-reports")
+  testOptions += Tests.Argument("-oIDOF", "-u", "target/test-reports"),
+  testOptions += Tests.Setup(_ => sys.props("sbt-testing") = "true")
 ))
-
-concurrentRestrictions in Global += Tags.limit(Tags.Test, 1)
-
-Defaults.itSettings
-configs(IntegrationTest)
-inConfig(IntegrationTest)(Seq(
-  parallelExecution := false,
-  test := (test dependsOn docker).value,
-  testOptions += Tests.Filter(_.endsWith("Suite"))
-))
-
-dockerfile in docker := {
-  val configTemplate = (resourceDirectory in IntegrationTest).value / "template.conf"
-  val startWaves = (sourceDirectory in IntegrationTest).value / "container" / "start-waves.sh"
-
-  new Dockerfile {
-    from("anapsix/alpine-java:8_server-jre")
-    add(assembly.value, "/opt/waves/waves.jar")
-    add(Seq(configTemplate, startWaves), "/opt/waves/")
-    run("chmod", "+x", "/opt/waves/start-waves.sh")
-    entryPoint("/opt/waves/start-waves.sh")
-  }
-}
-
-// packaging settings
-val upstartScript = TaskKey[File]("upstartScript")
-val packageSource = SettingKey[File]("packageSource")
-val network = SettingKey[Network]("network")
 
 commands += Command.command("packageAll") { state =>
   "clean" ::
-    "assembly" ::
-    "debian:packageBin" ::
-    state
+  "assembly" ::
+  "debian:packageBin" ::
+  state
 }
 
 inConfig(Linux)(Seq(
@@ -111,15 +92,19 @@ inConfig(Linux)(Seq(
   packageDescription := "Waves node"
 ))
 
-network := Network(sys.props.get("network"))
+val network = Def.setting { Network(sys.props.get("network")) }
 normalizedName := network.value.name
 
 javaOptions in Universal ++= Seq(
   // -J prefix is required by the bash script
   "-J-server",
-  // JVM memory tuning for 1g ram
+  // JVM memory tuning for 2g ram
   "-J-Xms128m",
-  "-J-Xmx1g",
+  "-J-Xmx2g",
+  "-J-XX:+ExitOnOutOfMemoryError",
+  // Java 9 support
+  "-J-XX:+IgnoreUnrecognizedVMOptions",
+  "-J--add-modules=java.xml.bind",
 
   // from https://groups.google.com/d/msg/akka-user/9s4Yl7aEz3E/zfxmdc0cGQAJ
   "-J-XX:+UseG1GC",
@@ -132,8 +117,8 @@ javaOptions in Universal ++= Seq(
   "-J-XX:+UseStringDeduplication")
 
 mappings in Universal += (baseDirectory.value / s"waves-${network.value}.conf" -> "doc/waves.conf.sample")
-packageSource := sourceDirectory.value / "package"
-upstartScript := {
+val packageSource = Def.setting { sourceDirectory.value / "package" }
+val upstartScript = Def.task {
   val src = packageSource.value / "upstart.conf"
   val dest = (target in Debian).value / "upstart" / s"${packageName.value}.conf"
   val result = TemplateWriter.generateScript(src.toURI.toURL, linuxScriptReplacements.value)
@@ -141,8 +126,8 @@ upstartScript := {
   dest
 }
 linuxPackageMappings ++= Seq(
-  packageMapping((upstartScript.value, s"/usr/share/${packageName.value}/conf/upstart.conf"))
-).map(_.withConfig().withPerms("644").withUser(packageName.value).withGroup(packageName.value))
+  (upstartScript.value, s"/etc/init/${packageName.value}.conf")
+).map(packageMapping(_).withConfig().withPerms("644"))
 
 linuxStartScriptTemplate in Debian := (packageSource.value / "systemd.service").toURI.toURL
 linuxScriptReplacements += "detect-loader" ->
@@ -162,4 +147,17 @@ inConfig(Debian)(Seq(
 ))
 
 lazy val node = project.in(file("."))
-lazy val generator = project.in(file("generator")).dependsOn(node % "compile->it")
+
+lazy val discovery = project
+
+lazy val it = project
+  .dependsOn(node)
+
+lazy val generator = project
+  .dependsOn(it)
+  .settings(
+    libraryDependencies += "com.github.scopt" %% "scopt" % "3.6.0"
+  )
+
+
+

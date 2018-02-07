@@ -7,6 +7,7 @@
 target
 *.tgz
 *.jar
+!third-party/yourkit/yjp-controller-api-redist.jar
 
 # vim
 *.*~
@@ -14,12 +15,14 @@ target
 # dotfiles
 .dockerignore
 .editorconfig
+.DS_Store
 
 # logs
 *.log
 
 # local settings
 localsettings.json
+local.conf
 
 # Text files
 *.txt
@@ -35,3 +38,4 @@ Dockerfile
 
 package
 !src/package
+native

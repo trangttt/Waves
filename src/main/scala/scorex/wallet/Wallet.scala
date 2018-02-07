@@ -1,83 +1,41 @@
 package scorex.wallet
 
-import java.io.{ByteArrayInputStream, File, FileInputStream, FileOutputStream}
-import java.security.cert.{Certificate, CertificateFactory}
-import java.security.{KeyPair, KeyPairGenerator, KeyStore, PrivateKey}
+import java.io.{File, FileInputStream}
+import java.security.KeyStore
 
+import com.google.common.primitives.{Bytes, Ints}
 import com.wavesplatform.settings.WalletSettings
-import ru.CryptoPro.JCP.JCP
-import scorex.account.{Address, PrivateKeyAccount, PublicKeyAccount}
+import com.wavesplatform.state2.ByteStr
+import com.wavesplatform.utils.JsonFileStorage
+import play.api.libs.json._
+import scorex.account.{Address, PrivateKeyAccount}
+import scorex.crypto.hash.SecureCryptographicHash
 import scorex.transaction.ValidationError
-import scorex.utils.ScorexLogging
-import sun.security.jca.JCAUtil
-import ru.CryptoPro.JCPRequest.GostCertificateRequest
+import scorex.transaction.ValidationError.MissingSenderPrivateKey
+import scorex.utils.{ScorexLogging, randomBytes}
 
-import scala.collection.JavaConverters._
-import scala.util.{Failure, Success, Try}
+import scala.collection.concurrent.TrieMap
+import scala.util.control.NonFatal
+import com.wavesplatform.utils._
+import ru.CryptoPro.JCP.JCP
 
-class Wallet (file: Option[File], password: Array[Char]) extends AutoCloseable with ScorexLogging {
+trait Wallet {
 
-  import Wallet._
+  def seed: Array[Byte]
 
-  private val keyStore = KeyStore.getInstance(JCP.HD_STORE_NAME, JCP.PROVIDER_NAME)
-  file match {
-    case Some(f) if f.exists() =>
-      keyStore.load(new FileInputStream(f), password)
-    case Some(f) if !f.exists() =>
-      f.getParentFile.mkdirs()
-      f.createNewFile()
-      keyStore.load(null, null)
-    case _ => keyStore.load(null, null)
-  }
+  def nonce: Int
 
+  def privateKeyAccounts: List[PrivateKeyAccount]
 
-  def generateNewAccounts(howMany: Int): Seq[PublicKeyAccount] =
-    (1 to howMany).flatMap(_ => generateNewAccount())
+  def generateNewAccounts(howMany: Int): Seq[PrivateKeyAccount]
 
-  private def genSelfCert(pair: KeyPair, dname: String): Certificate = {
-    val gr = new GostCertificateRequest()
-    val enc = gr.getEncodedSelfCert(pair, dname)
-    val cf = CertificateFactory.getInstance(JCP.CERTIFICATE_FACTORY_NAME)
-    cf.generateCertificate(new ByteArrayInputStream(enc))
-  }
+  def generateNewAccount(): Option[PrivateKeyAccount]
 
-  def generateNewAccount(): Option[PublicKeyAccount] = synchronized {
-    val pair = kg.generateKeyPair
-    val pka = PublicKeyAccount(pair.getPublic.getEncoded)
-    keyStore.setKeyEntry(pka.address, pair.getPrivate, password, Array(genSelfCert(pair, "CN=Waves_2012_256, O=Waves, C=RU")))
-    // todo do not store it like this?
-    file.foreach(f => keyStore.store(new FileOutputStream(f), password))
-    Some(pka)
-  }
+  def deleteAccount(account: PrivateKeyAccount): Boolean
 
-  def deleteAccount(account: PrivateKeyAccount): Boolean = synchronized {
-    Try(keyStore.deleteEntry(account.address)).isSuccess
-  }
+  def privateKeyAccount(account: Address): Either[ValidationError, PrivateKeyAccount]
 
-  def privateKeyAccounts(): Seq[PrivateKeyAccount] = {
-    for {
-      // todo filter by waves prefix
-      alias <- keyStore.aliases().asScala.toSeq
-    } yield {
-      val key = keyStore.getKey(alias, password)
-      val cert = keyStore.getCertificate(alias)
-      PrivateKeyAccount(key.asInstanceOf[PrivateKey], cert.getPublicKey)
-    }
-  }
-
-  def privateKeyAccount(account: Address): Either[ValidationError, PrivateKeyAccount] = {
-    Try(keyStore.getCertificate(account.address) -> keyStore.getKey(account.address, password)) match {
-      // todo construct it
-      case Success((c, k)) => Right(PrivateKeyAccount(k.asInstanceOf[PrivateKey], c.getPublicKey))
-      case Failure(f) => Left(ValidationError.MissingSenderPrivateKey)
-    }
-  }
-
-  def nonEmpty = keyStore.aliases().hasMoreElements
-
-  def close(): Unit = ()
 }
-
 
 object Wallet extends ScorexLogging {
 
@@ -87,20 +45,93 @@ object Wallet extends ScorexLogging {
       privKeyAcc <- w.privateKeyAccount(acc)
     } yield privKeyAcc
 
+    def exportAccountSeed(account: Address): Either[ValidationError, Array[Byte]] = w.privateKeyAccount(account).map(_.seed)
   }
 
-  lazy val kg: KeyPairGenerator = {
-    val kg = KeyPairGenerator.getInstance(JCP.GOST_EL_2012_256_NAME, JCP.PROVIDER_NAME)
-    kg.initialize(512, JCAUtil.getSecureRandom)
-    kg
+  def generateNewAccount(seed: Array[Byte], nonce: Int): PrivateKeyAccount = {
+    val accountSeed = generateAccountSeed(seed, nonce)
+    PrivateKeyAccount(accountSeed)
   }
 
-  def generateNewAccount(): PrivateKeyAccount = {
-    val pair = kg.generateKeyPair
-    PrivateKeyAccount(pair.getPrivate, pair.getPublic)
-  }
+  def generateAccountSeed(seed: Array[Byte], nonce: Int): Array[Byte] =
+    SecureCryptographicHash(Bytes.concat(Ints.toByteArray(nonce), seed))
 
-  def apply(settings: WalletSettings): Wallet = {
-    new Wallet(settings.file, settings.password.toCharArray)
+  def apply(settings: WalletSettings): Wallet = new WalletImpl(settings.file, settings.password, settings.seed)
+
+  private class WalletImpl(file: Option[File], password: String, seedFromConfig: Option[ByteStr])
+    extends ScorexLogging with Wallet {
+
+    private val keyStore = KeyStore.getInstance(JCP.HD_STORE_NAME, JCP.PROVIDER_NAME)
+    file match {
+      case Some(f) if f.exists() =>
+        keyStore.load(new FileInputStream(f), password)
+      case Some(f) if !f.exists() =>
+        f.getParentFile.mkdirs()
+        f.createNewFile()
+        keyStore.load(null, null)
+      case _ => keyStore.load(null, null)
+    }
+
+    private def loadOrImport(f: File) = try {
+      Some(JsonFileStorage.load[WalletData](f.getCanonicalPath, Some(key)))
+    } catch {
+      case NonFatal(_) => None
+    }
+
+    private var walletData = file.flatMap(loadOrImport).getOrElse(WalletData(actualSeed, Set.empty, 0))
+
+    private val l = new Object
+
+    private def lock[T](f: => T): T = l.synchronized(f)
+
+    private val accountsCache: TrieMap[String, PrivateKeyAccount] = {
+      val accounts = walletData.accountSeeds.map(seed => PrivateKeyAccount(seed.arr))
+      TrieMap(accounts.map(acc => acc.address -> acc).toSeq: _*)
+    }
+
+    private def save(): Unit = file.foreach(f => JsonFileStorage.save(walletData, f.getCanonicalPath, Some(key)))
+
+    private def generateNewAccountWithoutSave(): Option[PrivateKeyAccount] = lock {
+      val nonce = getAndIncrementNonce()
+      val account = Wallet.generateNewAccount(seed, nonce)
+
+      val address = account.address
+      if (!accountsCache.contains(address)) {
+        accountsCache += account.address -> account
+        walletData = walletData.copy(accountSeeds = walletData.accountSeeds + ByteStr(account.seed))
+        log.info("Added account #" + privateKeyAccounts.size)
+        Some(account)
+      } else None
+    }
+
+    override def seed: Array[Byte] = walletData.seed.arr
+
+    override def privateKeyAccounts: List[PrivateKeyAccount] = accountsCache.values.toList
+
+    override def generateNewAccounts(howMany: Int): Seq[PrivateKeyAccount] =
+      (1 to howMany).flatMap(_ => generateNewAccountWithoutSave()).tap(_ => save())
+
+    override def generateNewAccount(): Option[PrivateKeyAccount] = lock {
+      generateNewAccountWithoutSave().map(acc => {save(); acc})
+    }
+
+    override def deleteAccount(account: PrivateKeyAccount): Boolean = lock {
+      val before = walletData.accountSeeds.size
+      walletData = walletData.copy(accountSeeds = walletData.accountSeeds - ByteStr(account.seed))
+      accountsCache -= account.address
+      save()
+      before > walletData.accountSeeds.size
+    }
+
+    override def privateKeyAccount(account: Address): Either[ValidationError, PrivateKeyAccount] =
+      accountsCache.get(account.address).toRight[ValidationError](MissingSenderPrivateKey)
+
+    override def nonce: Int = walletData.nonce
+
+    private def getAndIncrementNonce(): Int = lock {
+      val r = walletData.nonce
+      walletData = walletData.copy(nonce = walletData.nonce + 1)
+      r
+    }
   }
 }

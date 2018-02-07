@@ -1,36 +1,55 @@
 package com.wavesplatform.network
 
-import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
-import akka.dispatch.ExecutionContexts
+import com.google.common.cache.CacheBuilder
 import com.wavesplatform.UtxPool
-import com.wavesplatform.state2.diffs.TransactionDiffer.TransactionValidationError
-import io.netty.channel.ChannelHandler.Sharable
-import io.netty.channel.group.ChannelGroup
-import io.netty.channel.{ChannelHandlerContext, ChannelInboundHandlerAdapter}
+import com.wavesplatform.settings.SynchronizationSettings.UtxSynchronizerSettings
+import com.wavesplatform.state2.ByteStr
+import io.netty.channel.Channel
+import io.netty.channel.group.{ChannelGroup, ChannelMatcher}
+import monix.execution.{CancelableFuture, Scheduler}
 import scorex.transaction.Transaction
-import scorex.utils.ScorexLogging
 
-import scala.concurrent.Future
+object UtxPoolSynchronizer {
+  def start(utx: UtxPool, settings: UtxSynchronizerSettings, allChannels: ChannelGroup, txSource: ChannelObservable[Transaction]): CancelableFuture[Unit] = {
+    implicit val scheduler: Scheduler = Scheduler.singleThread("utx-pool-sync")
 
-@Sharable
-class UtxPoolSynchronizer(utx: UtxPool, allChannels: ChannelGroup)
-  extends ChannelInboundHandlerAdapter with ScorexLogging {
+    val dummy = new Object()
+    val knownTransactions = CacheBuilder
+      .newBuilder()
+      .maximumSize(settings.networkTxCacheSize)
+      .expireAfterWrite(settings.networkTxCacheTime.toMillis, TimeUnit.MILLISECONDS)
+      .build[ByteStr, Object]
 
-  private implicit val executor = ExecutionContexts.fromExecutor(Executors.newSingleThreadExecutor())
+    txSource
+      .observeOn(scheduler)
+      .bufferTimedAndCounted(settings.maxBufferTime, settings.maxBufferSize)
+      .foreach { txBuffer =>
+        val toAdd = txBuffer.filter {
+          case (_, tx) =>
+            val isNew = Option(knownTransactions.getIfPresent(tx.id())).isEmpty
+            if (isNew) knownTransactions.put(tx.id(), dummy)
+            isNew
+        }
 
-  override def channelRead(ctx: ChannelHandlerContext, msg: AnyRef): Unit = msg match {
-    case t: Transaction => Future(utx.putIfNew(t) match {
-      case Left(TransactionValidationError(e, _)) =>
-        log.debug(s"${id(ctx)} Error processing transaction ${t.id}: $e")
-      case Left(e) =>
-        log.debug(s"${id(ctx)} Error processing transaction ${t.id}: $e")
-      case Right(true) =>
-        allChannels.broadcast(RawBytes(TransactionMessageSpec.messageCode, t.bytes), Some(ctx.channel()))
-        log.trace(s"${id(ctx)} Added transaction ${t.id} to UTX pool")
-      case Right(false) =>
-        log.trace(s"${id(ctx)} TX ${t.id} already known")
-    })
-    case _ => super.channelRead(ctx, msg)
+        if (toAdd.nonEmpty) {
+          utx.batched { ops =>
+            toAdd
+              .groupBy { case (channel, _) => channel }
+              .foreach {
+                case (sender, xs) =>
+                  val channelMatcher: ChannelMatcher = { (_: Channel) != sender }
+                  xs.foreach { case (_, tx) =>
+                    ops.putIfNew(tx) match {
+                      case Right(true) => allChannels.write(RawBytes(TransactionSpec.messageCode, tx.bytes()), channelMatcher)
+                      case _ =>
+                    }
+                  }
+              }
+          }
+          allChannels.flush()
+        }
+    }
   }
 }

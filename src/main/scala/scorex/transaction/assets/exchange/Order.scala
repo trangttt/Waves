@@ -3,6 +3,7 @@ package scorex.transaction.assets.exchange
 import com.google.common.primitives.Longs
 import com.wavesplatform.state2.ByteStr
 import io.swagger.annotations.ApiModelProperty
+import monix.eval.Coeval
 import play.api.libs.json.{JsObject, Json}
 import scorex.account.{PrivateKeyAccount, PublicKeyAccount}
 import com.wavesplatform.crypto.GostSign
@@ -71,8 +72,7 @@ case class Order(@ApiModelProperty(dataType = "java.lang.String") senderPublicKe
 
   import Order._
 
-  @ApiModelProperty(hidden = true)
-  lazy val signatureValid: Boolean = GostSign.verify(signature, toSign, senderPublicKey.publicKey)
+  val signatureValid = Coeval.evalOnce(GostSign.verify(signature, toSign, senderPublicKey.publicKey))
 
   def isValid(atTime: Long): Validation = {
     isValidAmount(price, amount) &&
@@ -94,21 +94,20 @@ case class Order(@ApiModelProperty(dataType = "java.lang.String") senderPublicKe
       (getReceiveAmount(matchPrice, matchAmount).getOrElse(0L) > 0) :| "ReceiveAmount should be > 0"
   }
 
-  @ApiModelProperty(hidden = true)
-  lazy val toSign: Array[Byte] = senderPublicKey.publicKey.getEncoded ++ matcherPublicKey.publicKey.getEncoded ++
+  def toSign: Array[Byte] = senderPublicKey.publicKey.getEncoded ++ matcherPublicKey.publicKey ++
     assetPair.bytes ++ orderType.bytes ++
     Longs.toByteArray(price) ++ Longs.toByteArray(amount) ++
     Longs.toByteArray(timestamp) ++ Longs.toByteArray(expiration) ++
     Longs.toByteArray(matcherFee)
 
   @ApiModelProperty(hidden = true)
-  lazy val id: Array[Byte] = FastCryptographicHash(toSign)
+  val id: Coeval[Array[Byte]] = Coeval.evalOnce(FastCryptographicHash(toSign))
 
   @ApiModelProperty(hidden = true)
-  lazy val idStr: String = Base58.encode(id)
+  val idStr: Coeval[String] = Coeval.evalOnce(Base58.encode(id()))
 
   @ApiModelProperty(hidden = true)
-  lazy val bytes: Array[Byte] = toSign ++ signature
+  val bytes: Coeval[Array[Byte]] = Coeval.evalOnce(toSign ++ signature)
 
   @ApiModelProperty(hidden = true)
   def getReceiveAssetId: Option[AssetId] = orderType match {
@@ -141,10 +140,10 @@ case class Order(@ApiModelProperty(dataType = "java.lang.String") senderPublicKe
     }
   }.toEither.left.map(x => GenericError(x.getMessage))
 
-  override def json: JsObject = Json.obj(
-    "id" -> Base58.encode(id),
-    "senderPublicKey" -> Base58.encode(senderPublicKey.publicKey.getEncoded),
-    "matcherPublicKey" -> Base58.encode(matcherPublicKey.publicKey.getEncoded),
+  override val json: Coeval[JsObject] = Coeval.evalOnce(Json.obj(
+    "id" -> Base58.encode(id()),
+    "senderPublicKey" -> Base58.encode(senderPublicKey.publicKey),
+    "matcherPublicKey" -> Base58.encode(matcherPublicKey.publicKey),
     "assetPair" -> assetPair.json,
     "orderType" -> orderType.toString,
     "price" -> price,
@@ -153,9 +152,9 @@ case class Order(@ApiModelProperty(dataType = "java.lang.String") senderPublicKe
     "expiration" -> expiration,
     "matcherFee" -> matcherFee,
     "signature" -> Base58.encode(signature)
-  )
+  ))
 
-  def jsonStr: String = Json.stringify(json)
+  def jsonStr: String = Json.stringify(json())
 
   override def canEqual(that: Any): Boolean = that.isInstanceOf[Order]
 

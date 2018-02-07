@@ -1,66 +1,69 @@
 package com.wavesplatform.settings
 
-import java.io.File
-
 import com.typesafe.config.Config
+import com.wavesplatform.state2.ByteStr
 import net.ceedubs.ficus.Ficus._
 import net.ceedubs.ficus.readers.ArbitraryTypeReader._
 import net.ceedubs.ficus.readers.EnumerationReader._
 
 import scala.concurrent.duration._
 
-case class FunctionalitySettings(allowTemporaryNegativeUntil: Long,
+case class FunctionalitySettings(featureCheckBlocksPeriod: Int,
+                                 blocksForFeatureActivation: Int,
+                                 allowTemporaryNegativeUntil: Long,
                                  allowInvalidPaymentTransactionsByTimestamp: Long,
                                  requireSortedTransactionsAfter: Long,
-                                 generationBalanceDepthFrom50To1000AfterHeight: Long,
+                                 generationBalanceDepthFrom50To1000AfterHeight: Int,
                                  minimalGeneratingBalanceAfter: Long,
                                  allowTransactionsFromFutureUntil: Long,
                                  allowUnissuedAssetsUntil: Long,
-                                 allowBurnTransactionAfter: Long,
-                                 allowLeaseTransactionAfter: Long,
                                  requirePaymentUniqueIdAfter: Long,
-                                 allowExchangeTransactionAfter: Long,
                                  allowInvalidReissueInSameBlockUntilTimestamp: Long,
-                                 allowCreatealiasTransactionAfter: Long,
                                  allowMultipleLeaseCancelTransactionUntilTimestamp: Long,
-                                 resetEffectiveBalancesAtHeight: Long,
-                                 allowLeasedBalanceTransferUntil: Long)
+                                 resetEffectiveBalancesAtHeight: Int,
+                                 blockVersion3AfterHeight: Int,
+                                 preActivatedFeatures: Map[Short, Int]) {
+  val dontRequireSortedTransactionsAfter = blockVersion3AfterHeight
+  val allowLeasedBalanceTransferUntilHeight = blockVersion3AfterHeight
+
+  require(featureCheckBlocksPeriod > 0, "featureCheckBlocksPeriod must be greater than 0")
+  require((blocksForFeatureActivation > 0) && (blocksForFeatureActivation <= featureCheckBlocksPeriod), s"blocksForFeatureActivation must be in range 1 to $featureCheckBlocksPeriod")
+}
 
 object FunctionalitySettings {
-  val MAINNET = FunctionalitySettings(allowTemporaryNegativeUntil = 1479168000000L,
+  val MAINNET = apply(
+    featureCheckBlocksPeriod = 5000,
+    blocksForFeatureActivation = 4000,
+    allowTemporaryNegativeUntil = 1479168000000L,
     allowInvalidPaymentTransactionsByTimestamp = 1479168000000L,
     requireSortedTransactionsAfter = 1479168000000L,
-    generationBalanceDepthFrom50To1000AfterHeight = 232000L,
+    generationBalanceDepthFrom50To1000AfterHeight = 232000,
     minimalGeneratingBalanceAfter = 1479168000000L,
     allowTransactionsFromFutureUntil = 1479168000000L,
     allowUnissuedAssetsUntil = 1479416400000L,
-    allowBurnTransactionAfter = 1491192000000L,
-    allowLeaseTransactionAfter = 1491192000000L,
     requirePaymentUniqueIdAfter = 1491192000000L,
-    allowExchangeTransactionAfter = 1491192000000L,
     allowInvalidReissueInSameBlockUntilTimestamp = 1492768800000L,
-    allowCreatealiasTransactionAfter = 1503914400000L, // 2017-08-28T10:00:00Z
     allowMultipleLeaseCancelTransactionUntilTimestamp = 1492768800000L,
     resetEffectiveBalancesAtHeight = 462000,
-    allowLeasedBalanceTransferUntil = Long.MaxValue)
+    blockVersion3AfterHeight = 795000,
+    preActivatedFeatures = Map.empty)
 
-  val TESTNET = FunctionalitySettings(
+  val TESTNET = apply(
+    featureCheckBlocksPeriod = 3000,
+    blocksForFeatureActivation = 2700,
     allowTemporaryNegativeUntil = 1477958400000L,
     allowInvalidPaymentTransactionsByTimestamp = 1477958400000L,
     requireSortedTransactionsAfter = 1477958400000L,
-    generationBalanceDepthFrom50To1000AfterHeight = Long.MinValue,
-    minimalGeneratingBalanceAfter = Long.MinValue,
+    generationBalanceDepthFrom50To1000AfterHeight = 0,
+    minimalGeneratingBalanceAfter = 0,
     allowTransactionsFromFutureUntil = 1478100000000L,
     allowUnissuedAssetsUntil = 1479416400000L,
-    allowBurnTransactionAfter = 1481110521000L,
-    allowLeaseTransactionAfter = Long.MinValue,
     requirePaymentUniqueIdAfter = 1485942685000L,
-    allowExchangeTransactionAfter = 1483228800000L,
     allowInvalidReissueInSameBlockUntilTimestamp = 1492560000000L,
-    allowCreatealiasTransactionAfter = 1493596800000L,
     allowMultipleLeaseCancelTransactionUntilTimestamp = 1492560000000L,
     resetEffectiveBalancesAtHeight = 51500,
-    allowLeasedBalanceTransferUntil = 1495238400000L)
+    blockVersion3AfterHeight = 161700,
+    preActivatedFeatures = Map.empty)
 
   val configPath = "waves.blockchain.custom.functionality"
 }
@@ -68,12 +71,13 @@ object FunctionalitySettings {
 case class GenesisTransactionSettings(recipient: String, amount: Long)
 
 case class GenesisSettings(
-  blockTimestamp: Long,
-  timestamp: Long,
-  initialBalance: Long,
-  transactions: Seq[GenesisTransactionSettings],
-  initialBaseTarget: Long,
-  averageBlockDelay: FiniteDuration)
+                            blockTimestamp: Long,
+                            timestamp: Long,
+                            initialBalance: Long,
+                            signature: Option[ByteStr],
+                            transactions: Seq[GenesisTransactionSettings],
+                            initialBaseTarget: Long,
+                            averageBlockDelay: FiniteDuration)
 
 object GenesisSettings {
   val MAINNET = GenesisSettings(1460678400000L, 1465742577614L, Constants.UnitsInWave * Constants.TotalWaves,
@@ -96,11 +100,9 @@ object GenesisSettings {
     153722867L, 60.seconds)
 }
 
-case class BlockchainSettings(blockchainFile: Option[File],
-                              stateFile: Option[File],
-                              checkpointFile: Option[File],
-                              addressSchemeCharacter: Char,
-                              minimumInMemoryDiffSize: Int,
+case class BlockchainSettings(addressSchemeCharacter: Char,
+                              maxTransactionsPerBlockDiff: Int,
+                              minBlocksInMemory: Int,
                               functionalitySettings: FunctionalitySettings,
                               genesisSettings: GenesisSettings)
 
@@ -128,11 +130,9 @@ object BlockchainSettings {
     }
 
     BlockchainSettings(
-      blockchainFile = config.getAs[File](s"$configPath.blockchain-file"),
-      stateFile = config.getAs[File](s"$configPath.state-file"),
-      checkpointFile = config.getAs[File](s"$configPath.checkpoint-file"),
       addressSchemeCharacter = addressSchemeCharacter,
-      minimumInMemoryDiffSize = config.as[Int](s"$configPath.minimum-in-memory-diff-blocks"),
+      maxTransactionsPerBlockDiff = config.as[Int](s"$configPath.max-transactions-per-block-diff"),
+      minBlocksInMemory = config.as[Int](s"$configPath.min-blocks-in-memory"),
       functionalitySettings = functionalitySettings,
       genesisSettings = genesisSettings)
   }

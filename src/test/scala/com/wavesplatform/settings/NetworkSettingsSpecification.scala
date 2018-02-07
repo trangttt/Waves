@@ -1,6 +1,5 @@
 package com.wavesplatform.settings
 
-import java.io.File
 import java.net.InetSocketAddress
 
 import com.typesafe.config.ConfigFactory
@@ -14,7 +13,6 @@ class NetworkSettingsSpecification extends FlatSpec with Matchers {
   "NetworkSpecification" should "read values from config" in {
     val config = loadConfig(ConfigFactory.parseString(
       """waves.network {
-        |  file: /waves/peers.dat
         |  bind-address: "127.0.0.1"
         |  port: 6868
         |  node-name: "default-node-name"
@@ -28,8 +26,6 @@ class NetworkSettingsSpecification extends FlatSpec with Matchers {
         |  max-outbound-connections = 20
         |  max-single-host-connections = 2
         |  connection-timeout: 30s
-        |  outbound-buffer-size: 1K
-        |  min-ephemeral-port-number: 35368
         |  max-unverified-peers: 0
         |  peers-broadcast-interval: 2m
         |  black-list-threshold: 50
@@ -39,10 +35,13 @@ class NetworkSettingsSpecification extends FlatSpec with Matchers {
         |    gateway-timeout: 10s
         |    discover-timeout: 10s
         |  }
+        |  traffic-logger {
+        |    ignore-tx-messages = [28]
+        |    ignore-rx-messages = [23]
+        |  }
         |}""".stripMargin))
     val networkSettings = config.as[NetworkSettings]("waves.network")
 
-    networkSettings.file should be(Some(new File("/waves/peers.dat")))
     networkSettings.bindAddress should be(new InetSocketAddress("127.0.0.1", 6868))
     networkSettings.nodeName should be("default-node-name")
     networkSettings.declaredAddress should be(Some(new InetSocketAddress("127.0.0.1", 6868)))
@@ -54,12 +53,13 @@ class NetworkSettingsSpecification extends FlatSpec with Matchers {
     networkSettings.maxOutboundConnections should be(20)
     networkSettings.maxConnectionsPerHost should be(2)
     networkSettings.connectionTimeout should be(30.seconds)
-    networkSettings.outboundBufferSize should be(1024)
     networkSettings.maxUnverifiedPeers should be(0)
     networkSettings.peersBroadcastInterval should be(2.minutes)
     networkSettings.uPnPSettings.enable should be(true)
     networkSettings.uPnPSettings.gatewayTimeout should be(10.seconds)
     networkSettings.uPnPSettings.discoverTimeout should be(10.seconds)
+    networkSettings.trafficLogger.ignoreTxMessages should be(Set(28))
+    networkSettings.trafficLogger.ignoreRxMessages should be(Set(23))
   }
 
   it should "generate random nonce" in {
@@ -84,5 +84,12 @@ class NetworkSettingsSpecification extends FlatSpec with Matchers {
 
     networkSettings.nonce should not be 0
     networkSettings.nodeName should be(s"Node-${networkSettings.nonce}")
+  }
+
+  it should "fail with IllegalArgumentException on too long node name" in {
+    val config = loadConfig(ConfigFactory.parseString("waves.network.node-name = очень-длинное-название-в-многобайтной-кодировке-отличной-от-однобайтной-кодировки-американского-института-стандартов"))
+    intercept[IllegalArgumentException] {
+      config.as[NetworkSettings]("waves.network")
+    }
   }
 }

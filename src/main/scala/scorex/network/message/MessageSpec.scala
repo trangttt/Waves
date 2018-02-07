@@ -1,10 +1,12 @@
 package scorex.network.message
 
+import scala.reflect.ClassTag
 import scala.util.Try
 
-trait MessageSpec[Content <: AnyRef] {
+abstract class MessageSpec[Content <: AnyRef](implicit contentCt: ClassTag[Content]) {
+  val contentClass: Class[_] = contentCt.runtimeClass
   val messageCode: Message.MessageCode
-  val messageName: String
+  final val messageName: String = """Spec\$$""".r.replaceAllIn(getClass.getSimpleName, "")
 
   def maxLength: Int
 

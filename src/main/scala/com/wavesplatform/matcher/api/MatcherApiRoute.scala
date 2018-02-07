@@ -14,7 +14,6 @@ import com.wavesplatform.matcher.market.MatcherTransactionWriter.GetTransactions
 import com.wavesplatform.matcher.market.OrderBookActor._
 import com.wavesplatform.matcher.market.OrderHistoryActor._
 import com.wavesplatform.settings.RestAPISettings
-import com.wavesplatform.state2.reader.StateReader
 import io.swagger.annotations._
 import play.api.libs.json._
 import scorex.account.PublicKeyAccount
@@ -27,20 +26,21 @@ import scorex.utils.NTP
 import scorex.wallet.Wallet
 
 import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Future
 import scala.concurrent.duration._
 import scala.util.{Failure, Success, Try}
 
 @Path("/matcher")
 @Api(value = "/matcher/")
-case class MatcherApiRoute(wallet: Wallet,storedState: StateReader,
+case class MatcherApiRoute(wallet: Wallet,
                            matcher: ActorRef, orderHistory: ActorRef,
                            txWriter: ActorRef, settings: RestAPISettings, matcherSettings: MatcherSettings) extends ApiRoute {
   private implicit val timeout: Timeout = 5.seconds
 
   override lazy val route: Route =
     pathPrefix("matcher") {
-      matcherPublicKey ~ orderBook ~ place ~ getOrderHistory ~ getAllOrderHistory ~ getTradableBalance ~ orderStatus ~
-        historyDelete ~ cancel ~ orderbooks ~ orderBookDelete ~ getTransactionsByOrder
+      matcherPublicKey ~ orderBook ~ place ~ getAssetPairAndPublicKeyOrderHistory ~ getPublicKeyOrderHistory ~ getAllOrderHistory ~ getTradableBalance ~ getPublicKeyMatcherBalance ~ orderStatus ~
+        historyDelete ~ cancel ~ orderbooks ~ orderBookDelete ~ getTransactionsByOrder ~ forceCancelOrder
     }
 
   def withAssetPair(a1: String, a2: String): Directive1[AssetPair] = {
@@ -175,7 +175,7 @@ case class MatcherApiRoute(wallet: Wallet,storedState: StateReader,
   }
 
   @Path("/orderbook/{amountAsset}/{priceAsset}/publicKey/{publicKey}")
-  @ApiOperation(value = "Order History by Public Key",
+  @ApiOperation(value = "Order History by Asset Pair and Public Key",
     notes = "Get Order History for a given Asset Pair and Public Key",
     httpMethod = "GET")
   @ApiImplicitParams(Array(
@@ -185,20 +185,58 @@ case class MatcherApiRoute(wallet: Wallet,storedState: StateReader,
     new ApiImplicitParam(name = "Timestamp", value = "Timestamp", required = true, dataType = "integer", paramType = "header"),
     new ApiImplicitParam(name = "Signature", value = "Signature of [Public Key ++ Timestamp] bytes", required = true, dataType = "string", paramType = "header")
   ))
-  def getOrderHistory: Route = (path("orderbook" / Segment / Segment / "publicKey" / Segment) & get) { (a1, a2, publicKey) =>
+  def getAssetPairAndPublicKeyOrderHistory: Route = (path("orderbook" / Segment / Segment / "publicKey" / Segment) & get) { (a1, a2, publicKey) =>
     (headerValueByName("Timestamp") & headerValueByName("Signature")) { (ts, sig) =>
       checkGetSignature(publicKey, ts, sig) match {
-        case Success(addr) =>
+        case Success(address) =>
           withAssetPair(a1, a2) { pair =>
-            complete((orderHistory ? GetOrderHistory(pair, addr, NTP.correctedTime()))
+            complete((orderHistory ? GetOrderHistory(pair, address, NTP.correctedTime()))
               .mapTo[MatcherResponse]
               .map(r => r.code -> r.json))
           }
         case Failure(ex) =>
           complete(StatusCodes.BadRequest -> Json.obj("message" -> ex.getMessage))
-
       }
     }
+  }
+
+  @Path("/orderbook/{publicKey}")
+  @ApiOperation(value = "Order History by Public Key",
+    notes = "Get Order History for a given Public Key",
+    httpMethod = "GET")
+  @ApiImplicitParams(Array(
+    new ApiImplicitParam(name = "publicKey", value = "Public Key", required = true, dataType = "string", paramType = "path"),
+    new ApiImplicitParam(name = "Timestamp", value = "Timestamp", required = true, dataType = "integer", paramType = "header"),
+    new ApiImplicitParam(name = "Signature", value = "Signature of [Public Key ++ Timestamp] bytes", required = true, dataType = "string", paramType = "header")
+  ))
+  def getPublicKeyOrderHistory: Route = (path("orderbook" / Segment) & get) { publicKey =>
+    (headerValueByName("Timestamp") & headerValueByName("Signature")) { (ts, sig) =>
+      checkGetSignature(publicKey, ts, sig) match {
+        case Success(address) =>
+          complete((orderHistory ? GetAllOrderHistory(address, NTP.correctedTime()))
+            .mapTo[MatcherResponse]
+            .map(r => r.code -> r.json))
+        case Failure(ex) =>
+          complete(StatusCodes.BadRequest -> Json.obj("message" -> ex.getMessage))
+      }
+    }
+  }
+
+  @Path("/orders/cancel/{orderId}")
+  @ApiOperation(value = "Cancel Order by ID without signature",
+    notes = "Cancel Order by ID without signature",
+    httpMethod = "POST")
+  @ApiImplicitParams(Array(
+    new ApiImplicitParam(name = "orderId", value = "Order Id", required = true, dataType = "string", paramType = "path")
+  ))
+  def forceCancelOrder: Route = (path("orders" / "cancel" / Segment) & post & withAuth) { orderId =>
+    implicit val timeout = Timeout(10.seconds)
+    val resp: Future[MatcherResponse] = (orderHistory ? ForceCancelOrderFromHistory(orderId)).flatMap {
+      case Some(order: Order) => (matcher ? ForceCancelOrder(order.assetPair, orderId)).mapTo[MatcherResponse]
+      case None => Future { OrderCancelRejected("Order not found") }
+    }
+
+    complete(resp.map(r => r.code -> r.json))
   }
 
   @Path("/orders/{address}")
@@ -229,6 +267,28 @@ case class MatcherApiRoute(wallet: Wallet,storedState: StateReader,
       complete((orderHistory ? GetTradableBalance(pair, address, NTP.correctedTime()))
         .mapTo[MatcherResponse]
         .map(r => r.code -> r.json))
+    }
+  }
+
+  @Path("/matcherBalance/{publicKey}")
+  @ApiOperation(value = "Matcher Balance by Public Key",
+    notes = "Get Matcher Balance for a given Public Key",
+    httpMethod = "GET")
+  @ApiImplicitParams(Array(
+    new ApiImplicitParam(name = "publicKey", value = "Public Key", required = true, dataType = "string", paramType = "path"),
+    new ApiImplicitParam(name = "Timestamp", value = "Timestamp", required = true, dataType = "integer", paramType = "header"),
+    new ApiImplicitParam(name = "Signature", value = "Signature of [Public Key ++ Timestamp] bytes", required = true, dataType = "string", paramType = "header")
+  ))
+  def getPublicKeyMatcherBalance: Route = (path("matcherBalance" / Segment) & get) { publicKey =>
+    (headerValueByName("Timestamp") & headerValueByName("Signature")) { (ts, sig) =>
+      checkGetSignature(publicKey, ts, sig) match {
+        case Success(address) =>
+          complete((orderHistory ? GetMatcherBalance(address, NTP.correctedTime()))
+            .mapTo[MatcherResponse]
+            .map(r => r.code -> r.json))
+        case Failure(ex) =>
+          complete(StatusCodes.BadRequest -> Json.obj("message" -> ex.getMessage))
+      }
     }
   }
 

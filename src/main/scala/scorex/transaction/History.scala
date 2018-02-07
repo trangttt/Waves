@@ -1,9 +1,12 @@
 package scorex.transaction
 
 import com.wavesplatform.network.{BlockCheckpoint, Checkpoint}
-import com.wavesplatform.state2.{BlockDiff, ByteStr}
-import scorex.block.{Block}
-import scorex.transaction.History.BlockchainScore
+import com.wavesplatform.state2.ByteStr
+import com.wavesplatform.utils.HeightInfo
+import scorex.block.Block.BlockId
+import scorex.block.{Block, BlockHeader, MicroBlock}
+import scorex.consensus.nxt.NxtLikeConsensusBlockData
+import scorex.transaction.History.{BlockMinerInfo, BlockchainScore}
 import scorex.utils.Synchronized
 
 import scala.util.Try
@@ -12,6 +15,10 @@ trait History extends Synchronized with AutoCloseable {
 
   def height(): Int
 
+  def blockAt(height: Int): Option[Block]
+
+  def blockHeaderAndSizeAt(height: Int): Option[(BlockHeader, Int)]
+
   def blockBytes(height: Int): Option[Array[Byte]]
 
   def scoreOf(id: ByteStr): Option[BlockchainScore]
@@ -19,13 +26,24 @@ trait History extends Synchronized with AutoCloseable {
   def heightOf(blockId: ByteStr): Option[Int]
 
   def lastBlockIds(howMany: Int): Seq[ByteStr]
+
+  def lastBlockTimestamp(): Option[Long]
+
+  def lastBlockId(): Option[ByteStr]
+
+  def debugInfo: HeightInfo
 }
 
-trait HistoryWriter extends History {
+trait NgHistory extends History {
+  def microBlock(id: ByteStr): Option[MicroBlock]
 
-  def appendBlock(block: Block)(consensusValidation: => Either[ValidationError, BlockDiff]): Either[ValidationError, BlockDiff]
+  def bestLastBlockInfo(maxTimestamp: Long): Option[BlockMinerInfo]
+}
 
-  def discardBlock(): Seq[Transaction]
+trait DebugNgHistory {
+  def lastPersistedBlockIds(count: Int): Seq[BlockId]
+
+  def microblockIds(): Seq[BlockId]
 }
 
 trait CheckpointService {
@@ -52,11 +70,9 @@ object History {
 
   type BlockchainScore = BigInt
 
-  implicit class HistoryExt(history: History) {
+  case class BlockMinerInfo(consensus: NxtLikeConsensusBlockData, timestamp: Long, blockId: BlockId)
 
-    def blockAt(height: Int): Option[Block] = history.read { implicit lock =>
-      history.blockBytes(height).map(Block.parseBytes(_).get)
-    }
+  implicit class HistoryExt(history: History) {
 
     def score(): BlockchainScore = history.read { implicit lock =>
       history.lastBlock.flatMap(last => history.scoreOf(last.uniqueId)).getOrElse(0)
@@ -109,5 +125,4 @@ object History {
 
     def genesis: Block = history.blockAt(1).get
   }
-
 }

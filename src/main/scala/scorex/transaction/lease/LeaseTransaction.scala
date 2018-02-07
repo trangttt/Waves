@@ -2,8 +2,9 @@ package scorex.transaction.lease
 
 import com.google.common.primitives.{Bytes, Longs}
 import com.wavesplatform.state2.ByteStr
+import monix.eval.Coeval
 import play.api.libs.json.{JsObject, Json}
-import scorex.account.{AddressOrAlias, Address, PrivateKeyAccount, PublicKeyAccount}
+import scorex.account.{Address, AddressOrAlias, PrivateKeyAccount, PublicKeyAccount}
 import com.wavesplatform.crypto.GostSign
 import scorex.transaction.TransactionParser._
 import scorex.transaction._
@@ -20,26 +21,31 @@ case class LeaseTransaction private(sender: PublicKeyAccount,
 
   override val transactionType: TransactionType.Value = TransactionType.LeaseTransaction
 
-  lazy val toSign: Array[Byte] = Bytes.concat(Array(transactionType.id.toByte),
+  val toSign: Coeval[Array[Byte]] = Coeval.evalOnce(Bytes.concat(Array(transactionType.id.toByte),
     sender.publicKey.getEncoded,
     recipient.bytes.arr,
     Longs.toByteArray(amount),
     Longs.toByteArray(fee),
-    Longs.toByteArray(timestamp))
+    Longs.toByteArray(timestamp)))
 
-  override lazy val json: JsObject = jsonBase() ++ Json.obj(
+  override val json: Coeval[JsObject] = Coeval.evalOnce(jsonBase() ++ Json.obj(
     "amount" -> amount,
     "recipient" -> recipient.stringRepr,
     "fee" -> fee,
     "timestamp" -> timestamp
-  )
+  ))
 
   override val assetFee: (Option[AssetId], Long) = (None, fee)
-  override lazy val bytes: Array[Byte] = Bytes.concat(toSign, signature.arr)
+  override val bytes: Coeval[Array[Byte]] = Coeval.evalOnce(Bytes.concat(toSign(), signature.arr))
 
 }
 
 object LeaseTransaction {
+
+  object Status {
+    val Active = "active"
+    val Canceled = "canceled"
+  }
 
   def parseTail(bytes: Array[Byte]): Try[LeaseTransaction] = Try {
     val sender = PublicKeyAccount(bytes.slice(0, KeyLength))
@@ -62,7 +68,7 @@ object LeaseTransaction {
              recipient: AddressOrAlias,
              signature: ByteStr): Either[ValidationError, LeaseTransaction] = {
     if (amount <= 0) {
-      Left(ValidationError.NegativeAmount)
+      Left(ValidationError.NegativeAmount(amount, "waves"))
     } else if (Try(Math.addExact(amount, fee)).isFailure) {
       Left(ValidationError.OverflowError)
     } else if (fee <= 0) {
@@ -80,7 +86,7 @@ object LeaseTransaction {
              timestamp: Long,
              recipient: AddressOrAlias): Either[ValidationError, LeaseTransaction] = {
     create(sender, amount, fee, timestamp, recipient, ByteStr.empty).right.map { unsigned =>
-      unsigned.copy(signature = ByteStr(GostSign.sign(sender, unsigned.toSign)))
+      unsigned.copy(signature = ByteStr(GostSign.sign(sender, unsigned.toSign())))
     }
   }
 }

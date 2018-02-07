@@ -1,12 +1,11 @@
 package com.wavesplatform.matcher.market
 
-import com.wavesplatform.UtxPool
+import com.wavesplatform.{TestDB, UtxPool}
 import com.wavesplatform.matcher.model._
 import com.wavesplatform.matcher.{MatcherSettings, MatcherTestData}
 import com.wavesplatform.settings.{Constants, WalletSettings}
-import com.wavesplatform.state2.reader.StateReader
+import com.wavesplatform.state2.reader.SnapshotStateReader
 import com.wavesplatform.state2.{AssetInfo, ByteStr, LeaseInfo, Portfolio}
-import org.h2.mvstore.MVStore
 import org.scalamock.scalatest.PathMockFactory
 import org.scalatest._
 import org.scalatest.prop.PropertyChecks
@@ -17,6 +16,7 @@ import scorex.transaction.assets.exchange.{AssetPair, Order}
 import scorex.wallet.Wallet
 
 class OrderValidatorSpecification extends WordSpec
+  with TestDB
   with PropertyChecks
   with Matchers
   with MatcherTestData
@@ -24,15 +24,15 @@ class OrderValidatorSpecification extends WordSpec
   with BeforeAndAfterEach
   with PathMockFactory {
 
-  var storage = new OrderHistoryStorage(new MVStore.Builder().open())
-  var oh = OrderHistoryImpl(storage)
+  val db = open()
+  var oh = OrderHistoryImpl(db, matcherSettings)
 
   val utxPool: UtxPool = stub[UtxPool]
 
-  val ss: StateReader = stub[StateReader]
+  val ss: SnapshotStateReader = stub[SnapshotStateReader]
   (ss.assetInfo _).when(*).returns(Some(AssetInfo(true, 10000000000L)))
   val i1: IssueTransaction = IssueTransaction.create(PrivateKeyAccount(Array.empty), "WBTC".getBytes(), Array.empty, 10000000000L, 8.toByte, true, 100000L, 10000L).right.get
-  (ss.transactionInfo _).when(*).returns(Some((1, i1)))
+  (ss.transactionInfo _).when(*).returns(Some((1, Some(i1))))
 
   val s: MatcherSettings = matcherSettings.copy(account = MatcherAccount.address)
   val w = Wallet(WalletSettings(None, "matcher", Some(WalletSeed)))
@@ -48,7 +48,6 @@ class OrderValidatorSpecification extends WordSpec
   }
 
   override protected def beforeEach(): Unit = {
-    storage = new OrderHistoryStorage(new MVStore.Builder().open())
     ov = new OrderValidator {
       override val orderHistory: OrderHistory = oh
       override val utxPool: UtxPool = stub[UtxPool]

@@ -1,35 +1,45 @@
 package com.wavesplatform.history
 
-import java.io.File
 import java.util.concurrent.locks.{ReentrantReadWriteLock => RWL}
 
-import com.wavesplatform.settings.BlockchainSettings
-import com.wavesplatform.state2.reader.StateReader
-import com.wavesplatform.state2.{BlockchainUpdaterImpl, StateStorage, StateWriterImpl}
-import scorex.transaction.{BlockchainUpdater, History}
+import com.wavesplatform.features.FeatureProvider
+import com.wavesplatform.settings.WavesSettings
+import com.wavesplatform.state2._
+import com.wavesplatform.utils.HeightInfo
+import monix.eval.Coeval
+import org.iq80.leveldb.DB
+import scorex.transaction._
+import scorex.utils.{NTP, Time}
 
 import scala.util.{Success, Try}
 
 object StorageFactory {
 
-  private def createStateStorage(history: History, stateFile: Option[File]): Try[StateStorage] =
-    StateStorage(stateFile, dropExisting = false).flatMap { ss =>
+  type Storage = Coeval[(NgHistory with DebugNgHistory, FeatureProvider, StateReader, BlockchainUpdater, BlockchainDebugInfo)]
+  type HeightInfos = Coeval[(HeightInfo, HeightInfo)]
+
+  private def createStateStorage(history: History with FeatureProvider, db: DB, time: Time): Try[StateStorage] =
+    StateStorage(db, dropExisting = false).flatMap { ss =>
       if (ss.getHeight <= history.height()) Success(ss) else {
-        ss.close()
-        StateStorage(stateFile, dropExisting = true)
+        StateStorage(db, dropExisting = true)
       }
     }
 
-  def apply(settings: BlockchainSettings): Try[(History with AutoCloseable, AutoCloseable, StateReader, BlockchainUpdater)] = {
+  def apply[T](db: DB, settings: WavesSettings, time: Time = NTP): Try[(Storage, HeightInfos)] = {
     val lock = new RWL(true)
-
     for {
-      historyWriter <- HistoryWriterImpl(settings.blockchainFile, lock)
-      ss <- createStateStorage(historyWriter, settings.stateFile)
-      stateWriter = new StateWriterImpl(ss, lock)
-    } yield {
-      val bcu = BlockchainUpdaterImpl(stateWriter, historyWriter, settings.functionalitySettings, settings.minimumInMemoryDiffSize, lock)
-      (historyWriter, stateWriter, bcu.currentPersistedBlocksState, bcu)
-    }
+      historyWriter <- HistoryWriterImpl(db, lock, settings.blockchainSettings.functionalitySettings, settings.featuresSettings)
+      ss <- createStateStorage(historyWriter, db, time)
+    } yield (
+      Coeval {
+        val stateWriter = new StateWriterImpl(ss, lock)
+        val bcu = BlockchainUpdaterImpl(stateWriter, historyWriter, settings, time, lock)
+        val history: NgHistory with DebugNgHistory with FeatureProvider = bcu.historyReader
+        (history, history, bcu.bestLiquidState, bcu, bcu)
+      },
+      Coeval {
+        (historyWriter.debugInfo, ss.debugInfo)
+      }
+    )
   }
 }
