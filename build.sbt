@@ -157,3 +157,5 @@ lazy val generator = project
   .settings(
     libraryDependencies += "com.github.scopt" %% "scopt" % "3.6.0"
   )
+
+fork in run := true
