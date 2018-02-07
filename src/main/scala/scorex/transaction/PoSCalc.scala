@@ -30,7 +30,7 @@ object PoSCalc extends ScorexLogging {
     BigInt(1, calcGeneratorSignature(lastBlockData, generator).take(8).reverse)
 
   def calcGeneratorSignature(lastBlockData: NxtLikeConsensusBlockData, generator: PublicKeyAccount): FastCryptographicHash.Digest =
-    hash(lastBlockData.generationSignature.arr ++ generator.publicKey)
+    hash(lastBlockData.generationSignature.arr ++ generator.publicKey.getEncoded)
 
   def calcBaseTarget(avgBlockDelay: FiniteDuration, parentHeight: Int, parentBaseTarget: Long,
                      parentTimestamp: Long, maybeGreatGrandParentTimestamp: Option[Long], timestamp: Long): Long = {

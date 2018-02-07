@@ -1,6 +1,7 @@
 package scorex.block
 
 import com.google.common.primitives.{Bytes, Ints}
+import com.wavesplatform.crypto.GostSign
 import com.wavesplatform.mining.Miner.MaxTransactionsPerMicroblock
 import com.wavesplatform.state2._
 import monix.eval.Coeval
@@ -36,7 +37,7 @@ case class MicroBlock private(version: Byte, generator: PublicKeyAccount, transa
 
   private val bytesWithoutSignature: Coeval[Array[Byte]] = Coeval.evalOnce(bytes().dropRight(SignatureLength))
 
-  override val signatureValid: Coeval[Boolean] = Coeval.evalOnce(EllipticCurveImpl.verify(signature.arr, bytesWithoutSignature(), generator.publicKey))
+  override val signatureValid: Coeval[Boolean] = Coeval.evalOnce(EllipticCurveImpl.verify(signature.arr, bytesWithoutSignature(), generator.publicKey.getEncoded))
   override val signedDescendants: Coeval[Seq[Signed]] = Coeval.evalOnce(transactionData)
 
   override def toString: String = s"MicroBlock(${totalResBlockSig.trim} -> ${prevResBlockSig.trim}, txs=${transactionData.size})"
@@ -57,11 +58,11 @@ object MicroBlock extends ScorexLogging {
                    totalResBlockSig: BlockId): Either[ValidationError, MicroBlock] = for {
     _ <- Either.cond(prevResBlockSig.arr.length == SignatureLength, (), GenericError(s"Incorrect prevResBlockSig: ${prevResBlockSig.arr.length}"))
     _ <- Either.cond(totalResBlockSig.arr.length == SignatureLength, (), GenericError(s"Incorrect totalResBlockSig: ${totalResBlockSig.arr.length}"))
-    _ <- Either.cond(generator.publicKey.length == TransactionParser.KeyLength, (), GenericError(s"Incorrect generator.publicKey: ${generator.publicKey.length}"))
+    _ <- Either.cond(generator.publicKey.getEncoded.length == TransactionParser.KeyLength, (), GenericError(s"Incorrect generator.publicKey: ${generator.publicKey.getEncoded.length}"))
     nonSigned <- create(version = 3: Byte, generator, transactionData, prevResBlockSig, totalResBlockSig, ByteStr.empty)
   } yield {
     val toSign = nonSigned.bytes
-    val signature = EllipticCurveImpl.sign(generator, toSign())
+    val signature = GostSign.sign(generator, toSign())
     nonSigned.copy(signature = ByteStr(signature))
   }
 

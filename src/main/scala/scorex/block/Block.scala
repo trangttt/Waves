@@ -12,7 +12,6 @@ import play.api.libs.json.{JsObject, Json}
 import scorex.account.{Address, PrivateKeyAccount, PublicKeyAccount}
 import scorex.block.fields.FeaturesBlockField
 import scorex.consensus.nxt.{NxtConsensusBlockField, NxtLikeConsensusBlockData}
-import scorex.crypto.EllipticCurveImpl
 import scorex.crypto.hash.FastCryptographicHash.DigestSize
 import scorex.transaction.TransactionParser._
 import scorex.transaction.ValidationError.GenericError
@@ -249,7 +248,7 @@ object Block extends ScorexLogging {
         s"Too many transactions in Block version ${version.toInt}: $txsCount")
       _ <- Either.cond(reference.arr.length == SignatureLength, (), "Incorrect reference")
       _ <- Either.cond(consensusData.generationSignature.arr.length == GeneratorSignatureLength, (), "Incorrect consensusData.generationSignature")
-      _ <- Either.cond(signerData.generator.publicKey.length == KeyLength, (), "Incorrect signer.publicKey")
+      _ <- Either.cond(signerData.generator.publicKey.getEncoded.length == KeyLength, (), "Incorrect signer.publicKey")
       _ <- Either.cond(version > 2 || featureVotes.isEmpty, (), s"Block version $version could not contain feature votes")
       _ <- Either.cond(featureVotes.size <= MaxFeaturesInBlock, (), s"Block could not contain more than $MaxFeaturesInBlock feature votes")
     } yield Block(timestamp, version, reference, signerData, consensusData, transactionData, featureVotes)).left.map(GenericError(_))
@@ -263,7 +262,7 @@ object Block extends ScorexLogging {
                    signer: PrivateKeyAccount,
                    featureVotes: Set[Short]): Either[GenericError, Block] =
     build(version, timestamp, reference, consensusData, transactionData, SignerData(signer, ByteStr.empty), featureVotes).right.map(unsigned =>
-      unsigned.copy(signerData = SignerData(signer, ByteStr(EllipticCurveImpl.sign(signer, unsigned.bytes())))))
+      unsigned.copy(signerData = SignerData(signer, ByteStr(GostSign.sign(signer, unsigned.bytes())))))
 
   def genesisTransactions(gs: GenesisSettings): Seq[GenesisTransaction] = {
     gs.transactions.map { ts =>
@@ -286,9 +285,9 @@ object Block extends ScorexLogging {
     val reference = Array.fill(SignatureLength)(-1: Byte)
 
     // todo create one generator for genesis block
-    val genesisSignerPair = wallet.privateKeyAccounts().head
+    val genesisSignerPair = wallet.privateKeyAccounts.head
 
-    val genesisSigner = genesisSignerPair.publicKey.getEncoded
+    val genesisSigner = genesisSignerPair
 
     val timestamp = genesisSettings.blockTimestamp
     val toSign: Array[Byte] = Array(GenesisBlockVersion) ++
@@ -296,9 +295,9 @@ object Block extends ScorexLogging {
       reference ++
       cBytes ++
       txBytes ++
-      genesisSigner.publicKey
+      genesisSigner.publicKey.getEncoded
 
-    val signature = genesisSettings.signature.fold(EllipticCurveImpl.sign(genesisSigner, toSign))(_.arr)
+    val signature = genesisSettings.signature.fold(GostSign.sign(genesisSigner.privateKey, toSign))(_.arr)
 
     if (GostSign.verify(signature, toSign, genesisSigner.publicKey))
       Right(Block(timestamp = timestamp,

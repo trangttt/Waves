@@ -5,7 +5,6 @@ import com.wavesplatform.crypto.GostSign
 import com.wavesplatform.state2.ByteStr
 import play.api.libs.json.{JsObject, Json}
 import scorex.account.{PrivateKeyAccount, PublicKeyAccount}
-import scorex.crypto.EllipticCurveImpl
 import scorex.crypto.EllipticCurveImpl.SignatureLength
 import scorex.crypto.hash.FastCryptographicHash.DigestSize
 import scorex.transaction.TransactionParser.{KeyLength, _}

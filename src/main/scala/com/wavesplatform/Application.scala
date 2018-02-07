@@ -77,7 +77,7 @@ class Application(val actorSystem: ActorSystem, val settings: WavesSettings, con
   private var matcher: Option[Matcher] = None
 
   def run(): Unit = {
-    checkGenesis(history, settings, blockchainUpdater)
+    checkGenesis(history, settings, blockchainUpdater, wallet)
 
     if (wallet.nonEmpty)
       wallet.generateNewAccounts(1)
@@ -137,7 +137,6 @@ class Application(val actorSystem: ActorSystem, val settings: WavesSettings, con
         BlocksApiRoute(settings.restAPISettings, history, blockchainUpdater, allChannels, c => processCheckpoint(None, c)),
         TransactionsApiRoute(settings.restAPISettings, wallet, stateReader, history, utxStorage, allChannels, time),
         NxtConsensusApiRoute(settings.restAPISettings, stateReader, history, settings.blockchainSettings.functionalitySettings),
-        WalletApiRoute(settings.restAPISettings, wallet),
         PaymentApiRoute(settings.restAPISettings, wallet, utxStorage, allChannels, time),
         UtilsApiRoute(settings.restAPISettings),
         PeersApiRoute(settings.restAPISettings, network.connect, peerDatabase, establishedConnections),
@@ -232,7 +231,7 @@ class Application(val actorSystem: ActorSystem, val settings: WavesSettings, con
 
 object Application extends ScorexLogging {
 
-  private def readConfig(userConfigPath: Option[String]): Config = {
+  protected[wavesplatform] def readConfig(userConfigPath: Option[String]): Config = {
     val maybeConfigFile = for {
       maybeFilename <- userConfigPath
       file = new File(maybeFilename)

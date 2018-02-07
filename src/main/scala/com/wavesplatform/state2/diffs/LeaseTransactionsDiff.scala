@@ -15,7 +15,7 @@ import scala.util.{Left, Right}
 object LeaseTransactionsDiff {
 
   def lease(s: SnapshotStateReader, height: Int)(tx: LeaseTransaction): Either[ValidationError, Diff] = {
-    val sender = Address.fromPublicKey(tx.sender.publicKey)
+    val sender = Address.fromPublicKey(tx.sender.publicKey.getEncoded)
     s.resolveAliasEi(tx.recipient).flatMap { recipient =>
       if (recipient == sender)
         Left(GenericError("Cannot lease to self"))

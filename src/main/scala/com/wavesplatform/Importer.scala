@@ -40,7 +40,8 @@ object Importer extends ScorexLogging {
             val state = new StateWriterImpl(storage, lock)
             val history = HistoryWriterImpl(db, lock, settings.blockchainSettings.functionalitySettings, settings.featuresSettings).get
             val blockchainUpdater = BlockchainUpdaterImpl(state, history, settings, NTP, lock)
-            checkGenesis(history, settings, blockchainUpdater)
+            val wallet = ???
+            checkGenesis(history, settings, blockchainUpdater, wallet)
             val bis = new BufferedInputStream(inputStream)
             var quit = false
             val lenBytes = new Array[Byte](Ints.BYTES)

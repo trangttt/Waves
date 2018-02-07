@@ -213,7 +213,7 @@ object MicroBlockInvSpec extends MessageSpec[MicroBlockInv] {
       signature = ByteStr(bytes.view.slice(KeyLength + SignatureLength * 2, KeyLength + SignatureLength * 3).toArray)))
 
   override def serializeData(inv: MicroBlockInv): Array[Byte] = {
-    inv.sender.publicKey ++ inv.totalBlockSig.arr ++ inv.prevBlockSig.arr ++ inv.signature.arr
+    inv.sender.publicKey.getEncoded ++ inv.totalBlockSig.arr ++ inv.prevBlockSig.arr ++ inv.signature.arr
   }
 
   override val maxLength: Int = 300

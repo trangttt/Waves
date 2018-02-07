@@ -84,6 +84,6 @@ object BurnTransaction {
              fee: Long,
              timestamp: Long): Either[ValidationError, BurnTransaction] =
     create(sender, assetId, quantity, fee, timestamp, ByteStr.empty).right.map { unverified =>
-      unverified.copy(signature = ByteStr(GostSign.sign(sender, unverified.toSign)))
+      unverified.copy(signature = ByteStr(GostSign.sign(sender, unverified.toSign())))
     }
 }

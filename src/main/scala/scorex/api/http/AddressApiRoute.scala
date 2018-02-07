@@ -26,26 +26,9 @@ case class AddressApiRoute(settings: RestAPISettings, wallet: Wallet, state: Sta
 
   override lazy val route =
     pathPrefix("addresses") {
-      validate ~ balanceWithConfirmations ~ balanceDetails ~ balance ~ balanceWithConfirmations ~ verify ~ sign ~ deleteAddress ~ verifyText ~
+      validate ~ balanceWithConfirmations ~ balanceDetails ~ balance ~ balanceWithConfirmations ~ verify ~ sign ~ verifyText ~
         signText ~ seq ~ publicKey ~ effectiveBalance ~ effectiveBalanceWithConfirmations
     } ~ root ~ create
-
-  @Path("/{address}")
-  @ApiOperation(value = "Delete", notes = "Remove the account with address {address} from the wallet", httpMethod = "DELETE")
-  @ApiImplicitParams(Array(
-    new ApiImplicitParam(name = "address", value = "Address", required = true, dataType = "string", paramType = "path")
-  ))
-  def deleteAddress: Route = path(Segment) { address =>
-    (delete & withAuth) {
-      if (Address.fromString(address).isLeft) {
-        complete(InvalidAddress)
-      } else {
-        val deleted = wallet.findWallet(address).exists(account =>
-          wallet.deleteAccount(account))
-        complete(Json.obj("deleted" -> deleted))
-      }
-    }
-  }
 
   @Path("/sign/{address}")
   @ApiOperation(value = "Sign", notes = "Sign a message with a private key associated with {address}", httpMethod = "POST")

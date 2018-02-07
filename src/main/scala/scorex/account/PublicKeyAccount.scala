@@ -2,7 +2,6 @@ package scorex.account
 
 import java.security.PublicKey
 
-import com.objsys.asn1j.runtime.Asn1BerEncodeBuffer
 import ru.CryptoPro.JCP.Key.GostPublicKey
 import scorex.crypto.encode.Base58
 import scorex.transaction.TransactionParser

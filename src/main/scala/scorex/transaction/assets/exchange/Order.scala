@@ -94,7 +94,7 @@ case class Order(@ApiModelProperty(dataType = "java.lang.String") senderPublicKe
       (getReceiveAmount(matchPrice, matchAmount).getOrElse(0L) > 0) :| "ReceiveAmount should be > 0"
   }
 
-  def toSign: Array[Byte] = senderPublicKey.publicKey.getEncoded ++ matcherPublicKey.publicKey ++
+  def toSign: Array[Byte] = senderPublicKey.publicKey.getEncoded ++ matcherPublicKey.publicKey.getEncoded ++
     assetPair.bytes ++ orderType.bytes ++
     Longs.toByteArray(price) ++ Longs.toByteArray(amount) ++
     Longs.toByteArray(timestamp) ++ Longs.toByteArray(expiration) ++
@@ -142,8 +142,8 @@ case class Order(@ApiModelProperty(dataType = "java.lang.String") senderPublicKe
 
   override val json: Coeval[JsObject] = Coeval.evalOnce(Json.obj(
     "id" -> Base58.encode(id()),
-    "senderPublicKey" -> Base58.encode(senderPublicKey.publicKey),
-    "matcherPublicKey" -> Base58.encode(matcherPublicKey.publicKey),
+    "senderPublicKey" -> Base58.encode(senderPublicKey.publicKey.getEncoded),
+    "matcherPublicKey" -> Base58.encode(matcherPublicKey.publicKey.getEncoded),
     "assetPair" -> assetPair.json,
     "orderType" -> orderType.toString,
     "price" -> price,

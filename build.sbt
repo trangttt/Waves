@@ -15,7 +15,6 @@ name := "waves"
 git.useGitDescribe := true
 git.uncommittedSignifier := Some("DIRTY")
 
-
 publishArtifact in (Compile, packageDoc) := false
 publishArtifact in (Compile, packageSrc) := false
 mainClass in Compile := Some("com.wavesplatform.Application")
@@ -158,6 +157,3 @@ lazy val generator = project
   .settings(
     libraryDependencies += "com.github.scopt" %% "scopt" % "3.6.0"
   )
-
-
-

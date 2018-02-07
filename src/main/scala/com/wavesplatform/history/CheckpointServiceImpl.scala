@@ -5,7 +5,6 @@ import com.wavesplatform.network.Checkpoint
 import com.wavesplatform.settings.CheckpointsSettings
 import org.iq80.leveldb.DB
 import com.wavesplatform.crypto.GostSign
-import scorex.crypto.EllipticCurveImpl
 import scorex.transaction.ValidationError.GenericError
 import scorex.transaction.{CheckpointService, ValidationError}
 

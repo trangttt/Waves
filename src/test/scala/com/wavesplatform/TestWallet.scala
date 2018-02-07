@@ -5,7 +5,7 @@ import scorex.wallet.Wallet
 
 trait TestWallet {
   protected val testWallet = {
-    val wallet = Wallet(WalletSettings(None, "123", None))
+    val wallet = Wallet(WalletSettings(None, "123"))
     wallet.generateNewAccounts(10)
     wallet
   }

@@ -2,6 +2,7 @@ package com.wavesplatform.crypto
 
 import java.io.File
 
+import com.wavesplatform.settings.WalletSettings
 import scorex.account.AddressScheme
 import scorex.wallet.Wallet
 
@@ -11,6 +12,6 @@ object WalletGenerator extends App {
   }
   val f = new File("/tmp/wallet.dat")
   if (f.exists()) f.delete()
-  val w = new Wallet(Some(f), "qwertyuio".toCharArray)
+  val w = Wallet(WalletSettings(Some(f), "qwertyuio"))
   w.generateNewAccounts(5).foreach(p => println(p.address))
 }
