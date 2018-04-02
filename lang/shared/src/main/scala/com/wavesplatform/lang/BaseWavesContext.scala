@@ -11,29 +11,27 @@ abstract class BaseWavesContext extends Environment {
 
   import BaseWavesContext._
 
-  private val Global = com.wavesplatform.lang.hacks.Global // Hack for IDEA
+  private val Global           = com.wavesplatform.lang.hacks.Global // Hack for IDEA
+  private val environmentFuncs = new EnvironmentFunctions(this)
 
   val keccack256F: PredefFunction = hashFunction("keccack256")(Global.keccack256)
   val blake2b256F: PredefFunction = hashFunction("blake2b256")(Global.blake2b256)
   val sha256F: PredefFunction     = hashFunction("sha256")(Global.sha256)
 
   val sigVerifyF: PredefFunction = PredefFunction("sigVerify", BOOLEAN, List(("message", BYTEVECTOR), ("sig", BYTEVECTOR), ("pub", BYTEVECTOR))) {
-    case (m: ByteVector) :: (s: ByteVector) :: (p: ByteVector) :: Nil =>
-      Right(Global.curve25519verify(m.toArray, s.toArray, p.toArray))
-    case _ => ???
+    case (m: ByteVector) :: (s: ByteVector) :: (p: ByteVector) :: Nil => Right(Global.curve25519verify(m.toArray, s.toArray, p.toArray))
+    case _                                                            => ???
   }
 
-  private def getdataF(name: String, dataType: DataType) =
+  private def getDataF(name: String, dataType: DataType) =
     PredefFunction(name, OPTION(dataType.innerType), List(("address", addressType.typeRef), ("key", STRING))) {
-      case (addr: Obj) :: (k: String) :: Nil =>
-        val addressBytes  = addr.fields("bytes").value.value.apply().right.get.asInstanceOf[ByteVector].toArray
-        val retrievedData = data(addressBytes, k, dataType)
-        Right(retrievedData)
-      case _ => ???
+      case (addr: Obj) :: (k: String) :: Nil => environmentFuncs.getData(addr, k, dataType)
+      case _                                 => ???
     }
-  val getLongF: PredefFunction      = getdataF("getLong", DataType.Long)
-  val getBooleanF: PredefFunction   = getdataF("getBoolean", DataType.Boolean)
-  val getByteArrayF: PredefFunction = getdataF("getByteArray", DataType.ByteArray)
+
+  val getLongF: PredefFunction      = getDataF("getLong", DataType.Long)
+  val getBooleanF: PredefFunction   = getDataF("getBoolean", DataType.Boolean)
+  val getByteArrayF: PredefFunction = getDataF("getByteArray", DataType.ByteArray)
 
   private def proofBinding(tx: Transaction, x: Int): LazyVal =
     LazyVal(BYTEVECTOR)(EitherT.fromEither(tx.proofs map { pfs =>
@@ -42,8 +40,7 @@ abstract class BaseWavesContext extends Environment {
       else pfs(x)
     }))
 
-  private def transactionObject(tx: Transaction): Obj = {
-
+  private def transactionObject(tx: Transaction): Obj =
     Obj(
       Map(
         "type"       -> LazyVal(LONG)(EitherT.pure(tx.transactionType)),
@@ -66,7 +63,6 @@ abstract class BaseWavesContext extends Environment {
         "proof6" -> proofBinding(tx, 6),
         "proof7" -> proofBinding(tx, 7)
       ))
-  }
 
   private val txByIdF = {
     val returnType = OPTION(transactionType.typeRef)
@@ -111,51 +107,27 @@ abstract class BaseWavesContext extends Environment {
     )
   }
 
-  private val ChecksumLength             = 4
-  private val HashLength                 = 20
-  private val AddressVersion             = 1: Byte
-  private val AddressLength              = 1 + 1 + ChecksumLength + HashLength
-  private def secureHash(a: Array[Byte]) = Global.keccack256(Global.blake2b256(a))
-
   val addressFromPublicKeyF: PredefFunction = PredefFunction("addressFromPublicKey", addressType.typeRef, List(("publicKey", BYTEVECTOR))) {
-    case (pk: ByteVector) :: Nil =>
-      val publicKeyHash   = secureHash(pk.toArray).take(HashLength)
-      val withoutChecksum = AddressVersion +: networkByte +: publicKeyHash
-      val bytes           = withoutChecksum ++ secureHash(withoutChecksum).take(ChecksumLength)
-      Right(Obj(Map("bytes" -> LazyVal(BYTEVECTOR)(EitherT.pure(ByteVector(bytes))))))
-    case _ => ???
+    case (pk: ByteVector) :: Nil => Right(Obj(Map("bytes" -> LazyVal(BYTEVECTOR)(EitherT.pure(environmentFuncs.addressFromPublicKey(pk))))))
+    case _                       => ???
   }
 
   val addressFromString: PredefFunction = PredefFunction("addressFromString", optionAddress, List(("string", STRING))) {
     case (addressString: String) :: Nil =>
-      val Prefix: String = "address:"
-      val base58String   = if (addressString.startsWith(Prefix)) addressString.drop(Prefix.length) else addressString
-      Global.base58Decode(base58String) match {
-        case Right(addressBytes) =>
-          val version = addressBytes.head
-          val network = addressBytes.tail.head
-          lazy val checksumCorrect = {
-            val checkSum          = addressBytes.takeRight(ChecksumLength)
-            val checkSumGenerated = secureHash(addressBytes.dropRight(ChecksumLength)).take(ChecksumLength)
-            checkSum sameElements checkSumGenerated
-          }
-          if (version == AddressVersion && network == networkByte && addressBytes.length == AddressLength && checksumCorrect)
-            Right(Some(Obj(Map("bytes" -> LazyVal(BYTEVECTOR)(EitherT.pure(ByteVector(addressBytes)))))))
-          else Right(None)
-        case Left(e) => Left(e)
-      }
-
+      environmentFuncs
+        .addressFromString(addressString)
+        .map(_.map { address =>
+          Obj(Map("bytes" -> LazyVal(BYTEVECTOR)(EitherT.pure(address))))
+        })
     case _ => ???
   }
 
   val addressFromRecipientF: PredefFunction =
     PredefFunction("addressFromRecipient", addressType.typeRef, List(("AddressOrAlias", TYPEREF(addressOrAliasType.name)))) {
       case Obj(fields) :: Nil =>
-        val bytes = fields("bytes").value.map(_.asInstanceOf[ByteVector]).value()
-
-        bytes
-          .flatMap(bv => resolveAddress(bv.toArray))
-          .map(resolved => Obj(Map("bytes" -> LazyVal(BYTEVECTOR)(EitherT.pure(ByteVector(resolved))))))
+        environmentFuncs.addressFromRecipient(fields).map { resolved =>
+          Obj(Map("bytes" -> LazyVal(BYTEVECTOR)(EitherT.pure(ByteVector(resolved)))))
+        }
 
       case _ => ???
     }
